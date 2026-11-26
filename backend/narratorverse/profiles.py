@@ -7,7 +7,22 @@ from game_optimization_linux.config import CONFIG_DIR
 from game_optimization_linux.models.narrator import NarratorGameSettings
 from game_optimization_linux.services.narrator_persistence import _atomic_json_write
 from .audio_balance import validate_target
-from .quickmt_model import QUICKMT_PROVIDER_ID
+from .asr_segments import PRESETS
+
+
+ASR_VOICE_FIELDS = ('tts_provider_id', 'voice_id', 'chatterbox_voice_id', 'supertonic_voice_id',
+                    'speech_rate', 'adaptive_speech_rate', 'adaptive_max_boost', 'volume',
+                    'noise_scale', 'noise_w_scale', 'translation_profile_id')
+
+
+def asr_options(game_key, values):
+    settings = NarratorGameSettings.from_dict(
+        {'adaptive_speech_rate': False, **values, 'game_key': game_key}, expected_game_key=game_key)
+    preset = values.get('preset', 'quick')
+    enabled = values.get('tts_enabled', True)
+    if preset not in PRESETS or type(enabled) is not bool:
+        raise ValueError('Sprawdź ustawienia rozpoznawania i czytania.')
+    return {key: getattr(settings, key) for key in ASR_VOICE_FIELDS} | {'preset': preset, 'tts_enabled': enabled}
 
 class Profiles:
     def __init__(self, path=CONFIG_DIR / 'profiles.json'):
@@ -16,13 +31,18 @@ class Profiles:
             self.data = json.loads(path.read_text())
             if self.data.get('version') != 1:
                 raise ValueError('Unsupported profile schema')
-            migrated = deepcopy(self.data)
-            for profile in migrated['profiles']:
-                # Translator selection is no longer a user option. Preserve all
-                # other profile fields, including the decoding quality profile.
-                profile['settings']['translation_provider_id'] = QUICKMT_PROVIDER_ID
-            if migrated != self.data:
-                self.commit(migrated)
+            migrated = False
+            for profile in self.data.get('profiles', []):
+                settings = profile.get('settings', {})
+                if settings.get('tts_provider_id') == 'f5-polish-multi3-v2':
+                    settings['tts_provider_id'] = ''
+                    migrated = True
+                if 'asr' not in profile:
+                    previous = {key: settings[key] for key in ('voice_id', 'speech_rate', 'volume', 'translation_profile_id') if key in settings}
+                    profile['asr'] = asr_options(profile['id'], previous)
+                    migrated = True
+            if migrated:
+                self.persist()
         else:
             self.data = {'version': 1, 'selected': '', 'profiles': []}
             self.create('Domyślny')
@@ -46,12 +66,25 @@ class Profiles:
         settings = NarratorGameSettings.from_dict(p['settings'], expected_game_key=p['id'])
         return replace(settings, audio_balance_target=validate_target(settings.audio_balance_target))
 
+    def asr_options(self):
+        profile = self.selected()
+        return asr_options(profile['id'], profile['asr'])
+
+    def update_asr(self, values):
+        profile = self.selected()
+        options = asr_options(profile['id'], {**self.asr_options(), **values})
+        data = deepcopy(self.data)
+        next(item for item in data['profiles'] if item['id'] == profile['id'])['asr'] = options
+        self.commit(data)
+        return options
+
     def create(self, name):
         name = self.validate_name(name)
         key = 'local-' + uuid4().hex[:24]
         settings = replace(NarratorGameSettings.default(key), enabled=True)
         data = deepcopy(self.data)
-        data['profiles'].append({'id': key, 'name': name, 'settings': settings.to_dict(), 'ocr': {'mode': 'automatic'}})
+        data['profiles'].append({'id': key, 'name': name, 'settings': settings.to_dict(), 'ocr': {'mode': 'automatic'},
+                                 'asr': asr_options(key, {})})
         data['selected'] = key
         self.commit(data)
         return key
@@ -93,7 +126,7 @@ class Profiles:
 
     def reset(self, section):
         defaults = replace(NarratorGameSettings.default(self.selected()['id']), enabled=True).to_dict()
-        fields = {'recognition': ('ocr_provider_id','capture_sampling_hz','visual_change_threshold','stabilization_ms','ocr_min_confidence','duplicate_cooldown_ms'), 'voice': ('voice_id','speech_rate','adaptive_speech_rate','volume','noise_scale','noise_w_scale','read_speaker_names','translation_profile_id','subtitle_language_mode'), 'audio': ('audio_balance_enabled','audio_balance_target','audio_balance_db','normalize_narrator'), 'region': ('subtitle_region',)}
+        fields = {'recognition': ('ocr_provider_id','capture_sampling_hz','visual_change_threshold','stabilization_ms','ocr_min_confidence','duplicate_cooldown_ms'), 'voice': ('tts_provider_id','f5_voice_id','chatterbox_voice_id','supertonic_voice_id','voice_id','speech_rate','adaptive_speech_rate','adaptive_max_boost','volume','noise_scale','noise_w_scale','read_speaker_names','translation_profile_id','subtitle_language_mode'), 'audio': ('audio_balance_enabled','audio_balance_target','audio_balance_db','normalize_narrator'), 'region': ('subtitle_region',)}
         if section == 'profile':
             self.update(defaults, ocr_mode='automatic')
         elif section in fields:

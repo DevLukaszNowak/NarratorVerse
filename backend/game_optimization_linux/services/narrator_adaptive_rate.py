@@ -3,9 +3,10 @@ from __future__ import annotations
 
 
 class AdaptiveSpeechRate:
-    MAX_BOOST = 0.50
     RISE_STEP = 0.10
     FALL_STEP = 0.05
+    QUEUE_GRACE_SECONDS = 0.35
+    FULL_PRESSURE_SECONDS = 2.5
 
     def __init__(self) -> None:
         self.reset()
@@ -18,32 +19,40 @@ class AdaptiveSpeechRate:
         self._phrase_id: int | None = None
 
     def select(self, *, base_rate: float, enabled: bool, accepted_at: float,
-               text: str, backlog: bool, phrase_id: int) -> float:
-        if not enabled:
+               text: str, backlog: bool, phrase_id: int, max_boost: float = 0.50,
+               pending_audio_seconds: float = 0.0) -> float:
+        if not enabled or max_boost == 0:
             self.reset()
             return base_rate
         gap = None if self._previous_at is None else accepted_at - self._previous_at
         if gap is not None and gap < 0:
             self.reset()
             gap = None
-        # One isolated overlap is normal. Require two successive pressure signals
-        # before speeding up; duplicates/empty filtered speech never reach here.
-        rapid = gap is not None and gap < self._previous_duration * 0.9
-        pressure = backlog or rapid
-        self._pressure_count = min(2, self._pressure_count + 1) if pressure else 0
-        if gap is not None and not backlog:
-            # Silence sheds accumulated boost before the next utterance, rather
-            # than leaving the first sentence after a long pause unnaturally fast.
+
+        queue_pressure = (pending_audio_seconds - self.QUEUE_GRACE_SECONDS) / self.FULL_PRESSURE_SECONDS
+        cadence_pressure = 0.0
+        if gap is not None and self._previous_duration > 0:
+            cadence_pressure = (0.9 - gap / self._previous_duration) / 0.45
+        pressure = min(1.0, max(float(backlog), queue_pressure, cadence_pressure))
+        self._pressure_count = min(2, self._pressure_count + 1) if pressure > 0 else 0
+
+        # A single overlap does not start catch-up. Limit both the per-phrase
+        # change and the stored boost to what the speech engine can deliver.
+        ceiling = min(max_boost, 2.0 / base_rate - 1.0)
+        target = ceiling * pressure
+        if pressure == 0 and gap is not None:
             idle = max(0.0, gap - self._previous_duration - 3.0)
             self.boost = max(0.0, self.boost - idle * 0.025)
-        if self._pressure_count >= 2:
-            self.boost = min(self.MAX_BOOST, self.boost + self.RISE_STEP)
-        elif not pressure:
-            self.boost = max(0.0, self.boost - self.FALL_STEP)
+        # Steps scale with the user's ceiling, so +30% and +60% are both
+        # reached within a few dialogue lines and released gradually.
+        if self._pressure_count >= 2 and target > self.boost:
+            self.boost = min(target, self.boost + max(self.RISE_STEP, ceiling / 3))
+        elif target < self.boost:
+            self.boost = max(target, self.boost - max(self.FALL_STEP, ceiling / 8))
+        self.boost = min(self.boost, ceiling)
         rate = min(2.0, base_rate * (1.0 + self.boost))
         self._previous_at = accepted_at
-        # Conservative fallback until actual Piper PCM is available. Character
-        # count is a heuristic, not a measurement of the voice's speaking speed.
+        # Estimate until the provider returns the actual PCM duration.
         self._previous_duration = max(0.5, len(text) / (13.0 * rate))
         self._phrase_id = phrase_id
         return rate

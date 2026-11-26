@@ -17,6 +17,11 @@ from game_optimization_linux.config import NARRATOR_COMPONENTS_DIR
 from game_optimization_linux.models.narrator import TranslationResult
 
 
+ARGOS_TRANSLATION_COMPONENT_ID = "translation.opus-en-pl"
+ARGOS_TRANSLATION_MODEL_VERSION = "1.9"
+ARGOS_TRANSLATION_PROVIDER_ID = "argos-ctranslate2-en-pl-1.9-units-v1"
+
+
 class TranslationWorker(Protocol):
     def translate(self, text: str, *, beam_size: int) -> str: ...
 
@@ -29,10 +34,43 @@ def _translation_runtime_available() -> bool:
     try:
         return (
             importlib.util.find_spec("ctranslate2") is not None
-            and importlib.util.find_spec("sentencepiece") is not None
+            and importlib.util.find_spec("sacremoses") is not None
+            and importlib.util.find_spec("subword_nmt") is not None
         )
     except (ImportError, ValueError):
         return False
+
+
+def _model_layout(component_path: Path) -> tuple[Path, Path, str] | None:
+    roots = [component_path]
+    if component_path.is_dir():
+        roots.extend(
+            child
+            for child in sorted(component_path.iterdir())
+            if child.is_dir() and not child.name.startswith(".")
+        )
+    for root in roots:
+        model_dir = root / "model"
+        tokenizer = root / "bpe.model"
+        metadata_path = root / "metadata.json"
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(metadata, dict)
+            and str(metadata.get("from_code", "")).casefold() == "en"
+            and str(metadata.get("to_code", "")).casefold() == "pl"
+            and str(metadata.get("package_version", "")) == ARGOS_TRANSLATION_MODEL_VERSION
+            and tokenizer.is_file()
+            and (model_dir / "config.json").is_file()
+            and (model_dir / "model.bin").is_file()
+        ):
+            target_prefix = str(metadata.get("target_prefix", ""))
+            if any(character in target_prefix for character in "\r\n\0"):
+                continue
+            return model_dir, tokenizer, target_prefix
+    return None
 
 
 class _SubprocessTranslationWorker:
@@ -184,12 +222,12 @@ class _SubprocessTranslationWorker:
             process.wait(timeout=2.0)
 
 
-class LocalCTranslate2TranslationProvider:
-    """Shared lifecycle and validation for a lazy local CPU translation worker."""
+class ArgosCTranslate2TranslationProvider:
+    """CPU translation using an audited, extracted Argos EN to PL package."""
 
-    provider_id = "local-ctranslate2"
-    component_id = "translation.local"
-    model_version = ""
+    provider_id = ARGOS_TRANSLATION_PROVIDER_ID
+    component_id = ARGOS_TRANSLATION_COMPONENT_ID
+    model_version = ARGOS_TRANSLATION_MODEL_VERSION
     profile_ids = ("balanced", "fast")
     default_profile_id = "balanced"
 
@@ -218,7 +256,7 @@ class LocalCTranslate2TranslationProvider:
         return self._runtime_available() and self._layout() is not None
 
     def _layout(self) -> tuple[Path, Path, str] | None:
-        raise NotImplementedError("A provider must verify its pinned model layout")
+        return _model_layout(self._component_path)
 
     @property
     def status_message(self) -> str:
@@ -240,7 +278,9 @@ class LocalCTranslate2TranslationProvider:
         target = target_language.strip().casefold()
         if (source, target) != ("en", "pl"):
             raise ValueError("The current translation model supports English to Polish only")
-        normalized = " ".join(str(text).split())
+        normalized = '\n'.join(
+            ' '.join(line.split()) for line in str(text).splitlines() if line.strip()
+        )
         if not normalized:
             raise ValueError("Translation text cannot be empty")
         if len(normalized) > 8_000:
@@ -293,4 +333,10 @@ class LocalCTranslate2TranslationProvider:
             return self._worker
 
 
-__all__ = ["LocalCTranslate2TranslationProvider", "TranslationWorker"]
+__all__ = [
+    "ARGOS_TRANSLATION_COMPONENT_ID",
+    "ARGOS_TRANSLATION_MODEL_VERSION",
+    "ARGOS_TRANSLATION_PROVIDER_ID",
+    "ArgosCTranslate2TranslationProvider",
+    "TranslationWorker",
+]

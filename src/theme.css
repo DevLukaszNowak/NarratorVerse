@@ -12,7 +12,7 @@ button.primary:hover:not(:disabled){background:#85efd0;border-color:#85efd0}
 .primary .icon-accent{stroke:currentColor}
 .danger{color:#ff9aa7}.danger:hover:not(:disabled){background:#442330;border-color:#844252}
 aside{background:var(--sidebar);border-color:var(--border);padding-top:25px}
-.brand{gap:10px;margin-bottom:34px;min-width:0}.brand-logo{width:40px;height:40px;background:transparent;object-fit:contain;image-rendering:auto;flex:none}.brand strong{font-size:17px;letter-spacing:-.5px;color:var(--text);white-space:nowrap}.brand strong span{color:var(--accent)}
+.brand{gap:10px;margin-bottom:34px;min-width:0}.brand-logo{width:40px;height:40px;background:transparent;border-radius:50%;object-fit:contain;image-rendering:auto;flex:none}.brand strong{font-size:17px;letter-spacing:-.5px;color:var(--text);white-space:nowrap}.brand strong span{color:var(--accent)}
 nav{gap:8px}nav button{justify-content:flex-start;gap:15px;color:var(--muted);padding:14px 12px;min-height:48px;border-radius:12px;font-weight:500}nav button>.icon{color:#98a8b6}nav button:hover:not(:disabled){background:#182331}
 .chosen{background:var(--accent-soft)!important;color:var(--text)!important;font-weight:650!important}.chosen>.icon{color:#c3e2d9}
 .sidebar-bottom{gap:20px;color:var(--muted)}.sidebar-bottom>button{justify-content:flex-start;text-align:left;background:transparent;border-color:transparent;padding-left:12px;gap:12px}.sidebar-bottom>button:hover:not(:disabled){background:#182331}

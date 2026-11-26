@@ -7,10 +7,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import logging
+from threading import Lock
 import time
 from typing import Any
 
-from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QObject, Qt, Signal, Slot
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices, QtAudio
 
 from game_optimization_linux.models.narrator import PcmAudio
@@ -31,6 +32,7 @@ _COMPLETION_RATIO = 0.98
 # backend for an unreasonable allocation.
 _MAX_BUFFER_BYTES = 1024 * 1024
 _MAX_PENDING_UTTERANCES = 8
+_REFILL_TIMEOUT = 1.0
 
 
 def _expected_seconds(audio: PcmAudio) -> float:
@@ -51,10 +53,13 @@ class _Playback:
     error_callback: Callable[[str], None]
     queued_at: float
     started_at: float = 0.0
+    first_processed_at: float | None = None
+    last_pcm_probe_at: float | None = None
     # Diagnostics only: lets one request_id be tied to the phrase it spoke, so a
     # re-recognised variant of the same subtitle is identifiable in the log.
     text: str = ""
     terminal_callback: Callable[[], None] | None = None
+    first_pcm_callback: Callable[[], None] | None = None
     diagnostic_context: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -70,6 +75,7 @@ class PlaybackRecord:
 
     request_id: int
     pcm_bytes: int
+    pcm_bytes_read: int
     sample_rate: int
     channels: int
     sample_format: str
@@ -120,11 +126,21 @@ class QtNarratorAudioOutput(QObject):
         self._current: _Playback | None = None
         self._pending: _Playback | None = None
         self._waiting: deque[_Playback] = deque()
+        self._submitted_lock = Lock()
+        self._submitted_seconds = 0.0
         self._superseded_count = 0
         self._playRequested.connect(
             self._queue_playback, Qt.ConnectionType.QueuedConnection
         )
         self._stopRequested.connect(self._stop_all, Qt.ConnectionType.QueuedConnection)
+        self._pcm_probe = QTimer(self)
+        self._pcm_probe.setInterval(10)
+        self._pcm_probe.timeout.connect(self._observe_first_pcm)
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setInterval(30)
+        self._idle_timer.timeout.connect(self._retry_idle)
+        self._idle_position = -1
+        self._idle_since = 0.0
 
     @property
     def available(self) -> bool:
@@ -165,9 +181,11 @@ class QtNarratorAudioOutput(QObject):
         current = self._current
         pending = self._pending
         waiting = tuple(self._waiting)
+        with self._submitted_lock:
+            submitted = self._submitted_seconds
         # Called by the inference thread: do not touch the Qt sink here.
         remaining = max(0.0, current.expected_seconds - max(0.0, self._clock() - current.started_at)) if current is not None else 0.0
-        return remaining + (pending.expected_seconds if pending else 0.0) + sum(item.expected_seconds for item in waiting)
+        return remaining + submitted + (pending.expected_seconds if pending else 0.0) + sum(item.expected_seconds for item in waiting)
 
     def play(
         self,
@@ -180,6 +198,7 @@ class QtNarratorAudioOutput(QObject):
         error_callback: Callable[[str], None],
         text: str = "",
         terminal_callback: Callable[[], None] | None = None,
+        first_pcm_callback: Callable[[], None] | None = None,
     ) -> None:
         logger.debug(
             "Narrator playback event=submitted request=%d expected_ms=%.0f text=%r",
@@ -187,6 +206,8 @@ class QtNarratorAudioOutput(QObject):
             _expected_seconds(audio) * 1000.0,
             text[:120],
         )
+        with self._submitted_lock:
+            self._submitted_seconds += _expected_seconds(audio)
         self._playRequested.emit(
             _Playback(
                 audio=audio,
@@ -198,6 +219,7 @@ class QtNarratorAudioOutput(QObject):
                 queued_at=self._clock(),
                 text=str(text),
                 terminal_callback=terminal_callback,
+                first_pcm_callback=first_pcm_callback,
                 diagnostic_context=(self._diagnostic_context()
                                     if self._diagnostic is not None and self._diagnostic_context else {}),
             )
@@ -210,27 +232,61 @@ class QtNarratorAudioOutput(QObject):
         if self._diagnostic is not None:
             try:
                 self._diagnostic(event, **playback.diagnostic_context,
-                                 phrase_id=playback.request_id, audio_output_id=id(self),
-                                 text=playback.text, playback_id=id(playback), **fields)
+                                 phrase_id=playback.request_id, **fields)
             except Exception:
                 logger.exception("Experimental audio observer failed")
+
+    def _observe_first_pcm(self):
+        playback = self._current
+        if playback is None or self._sink is None:
+            self._pcm_probe.stop()
+            return
+        now = self._clock()
+        previous = playback.last_pcm_probe_at or playback.started_at
+        processed = self._processed_seconds(self._sink)
+        playback.last_pcm_probe_at = now
+        if processed > 0 and playback.first_processed_at is None:
+            playback.first_processed_at = now
+            self._trace("playback_first_processed_pcm", playback,
+                        observed_at_monotonic=playback.first_processed_at,
+                        submitted_at_monotonic=playback.started_at,
+                        processed_ms=processed*1000,
+                        pcm_bytes_read=self._buffer.pos() if self._buffer is not None else 0,
+                        pcm_bytes=len(playback.audio.samples),
+                        audio_queue_wait_ms=(playback.first_processed_at-playback.queued_at)*1000,
+                        observation_interval_ms=max(0., (now-previous)*1000),
+                        observation_target_interval_ms=10,
+                        previous_observation_at_monotonic=previous,
+                        evidence="QAudioSink.processedUSecs>0; not acoustic measurement")
+            self._pcm_probe.stop()
+            if playback.first_pcm_callback is not None:
+                try:
+                    playback.first_pcm_callback()
+                except Exception:
+                    logger.exception("Narrator first PCM playback observer failed")
 
     @Slot(object)
     def _queue_playback(self, playback: object) -> None:
         if not isinstance(playback, _Playback):
             return
+        with self._submitted_lock:
+            self._submitted_seconds = max(0.0, self._submitted_seconds - playback.expected_seconds)
         self._trace("sink_submitted", playback, queue_depth=self.queue_depth,
-                    expected_ms=playback.expected_seconds * 1000)
+                    expected_ms=playback.expected_seconds * 1000, pcm_bytes=len(playback.audio.samples))
         if self._current is not None:
             # Preserve rapid exchanges in order, including identical text from
             # different occurrences. Only explicit bounded overflow drops work.
             if self._pending is not None:
-                if len(self._waiting) >= _MAX_PENDING_UTTERANCES - 1:
+                if len(self._waiting) >= max(1, getattr(playback.audio, "pending_limit", _MAX_PENDING_UTTERANCES)) - 1:
                     self._superseded_count += 1
                     logger.warning("Narrator playback event=queue_overflow dropped_request=%d", self._pending.request_id)
-                    self._trace("audio_dropped", self._pending, reason="queue_overflow")
-                    self._notify_terminal(self._pending)
-                    self._pending = self._waiting.popleft()
+                    self._trace("audio_dropped", self._pending, reason="queue_overflow",
+                                pcm_bytes=len(self._pending.audio.samples))
+                    if self._waiting:
+                        self._pending = self._waiting.popleft()
+                    else:
+                        self._pending = playback
+                        return
                 self._waiting.append(playback)
                 return
             logger.debug(
@@ -247,6 +303,8 @@ class QtNarratorAudioOutput(QObject):
 
     @Slot()
     def _stop_all(self) -> None:
+        self._pcm_probe.stop()
+        self._idle_timer.stop()
         # An explicit stop is intentional. Record it so the terminal state that
         # follows is classified as a stop rather than a truncated utterance, and
         # so it never triggers a replay.
@@ -269,8 +327,7 @@ class QtNarratorAudioOutput(QObject):
                 reason="session or user stop",
             )
         for waiting in ([self._pending] if self._pending else []) + list(self._waiting):
-            self._trace("audio_dropped", waiting, reason="session_or_user_stop")
-            self._notify_terminal(waiting)
+            self._trace("audio_dropped", waiting, reason="session_or_user_stop", pcm_bytes=len(waiting.audio.samples))
         self._pending = None
         self._waiting.clear()
         self._current = None
@@ -288,31 +345,6 @@ class QtNarratorAudioOutput(QObject):
             buffer.deleteLater()
 
     def _start(self, playback: _Playback) -> None:
-        try:
-            self._start_unchecked(playback)
-        except Exception as error:
-            # This runs in a queued Qt slot: an exception cannot propagate to
-            # pipeline.audio.play(). Release the request here, including when
-            # device/sink construction or start() fails before audio begins.
-            self._current = None
-            sink, buffer = self._sink, self._buffer
-            self._sink = self._buffer = self._bytes = None
-            if sink is not None:
-                try:
-                    sink.stateChanged.disconnect(self._state_changed)
-                except (RuntimeError, TypeError):
-                    pass
-                try:
-                    sink.stop()
-                except Exception:
-                    logger.exception("Narrator failed sink cleanup")
-                sink.deleteLater()
-            if buffer is not None:
-                buffer.close()
-                buffer.deleteLater()
-            self._notify_failure(playback, f"Narrator audio start failed: {error}")
-
-    def _start_unchecked(self, playback: _Playback) -> None:
         audio_format = QAudioFormat()
         audio_format.setSampleRate(playback.audio.sample_rate)
         audio_format.setChannelCount(playback.audio.channels)
@@ -350,19 +382,14 @@ class QtNarratorAudioOutput(QObject):
             )
             return
         self._sink = self._sink_factory(device, audio_format, self)
-        # Prefetch the whole utterance. In pull mode the sink refills on a timer
-        # owned by the thread that created it, which is the main thread; while
-        # OCR and synthesis occupy that thread the refill never runs and the sink
-        # drains its buffer, reports IdleState with no error, and speech stops
-        # mid-sentence after a machine-dependent constant (measured: the default
-        # 11024 B buffer is exactly 0.25 s). Sizing the buffer to the utterance
-        # leaves nothing to starve. Must be set before start().
+        # Request a large prefetch to reduce underruns. Qt may allocate less.
         self._sink.setBufferSize(min(len(playback.audio.samples), _MAX_BUFFER_BYTES))
         self._sink.setVolume(playback.volume)
         self._sink.stateChanged.connect(self._state_changed)
         playback.started_at = self._clock()
         self._stop_requested = False
         self._current = playback
+        self._idle_position = -1
         self._sink.start(self._buffer)
         logger.debug(
             "Narrator playback event=started request=%d expected_ms=%.0f "
@@ -375,16 +402,32 @@ class QtNarratorAudioOutput(QObject):
         if self._current is playback:
             self._trace("sink_started", playback,
                         audio_queue_wait_ms=max(0.0, (playback.started_at - playback.queued_at) * 1000),
-                        expected_ms=playback.expected_seconds * 1000)
+                        expected_ms=playback.expected_seconds * 1000,
+                        pcm_bytes_read=self._buffer.pos(), pcm_bytes=len(playback.audio.samples),
+                        sink_buffer_bytes=self._sink.bufferSize())
+            if playback.first_processed_at is None and (self._diagnostic is not None or playback.first_pcm_callback is not None):
+                self._pcm_probe.start()
             playback.started_callback(
                 max(0.0, (self._clock() - playback.queued_at) * 1000.0)
             )
+
+    @Slot()
+    def _retry_idle(self) -> None:
+        if self._sink is None or self._sink.state() != QtAudio.State.IdleState:
+            self._idle_timer.stop()
+            return
+        if self._buffer is not None and not self._buffer.atEnd():
+            # Wake the existing pull stream at the current QBuffer position.
+            # Restarting the stream could replay data already handed to Qt.
+            self._buffer.readyRead.emit()
+        self._state_changed()
 
     @Slot()
     def _state_changed(self) -> None:
         sink = self._sink
         if sink is None:
             return
+        self._observe_first_pcm()
         state = sink.state()
         if state not in {QtAudio.State.IdleState, QtAudio.State.StoppedState}:
             return
@@ -394,6 +437,7 @@ class QtNarratorAudioOutput(QObject):
         # never count as success on its own: compare what the sink actually
         # processed against the duration the PCM implies.
         processed_seconds = 0.0
+        pcm_bytes_read = 0
         backend_error = "NoError"
         expected_seconds = 0.0
         elapsed_seconds = 0.0
@@ -401,8 +445,27 @@ class QtNarratorAudioOutput(QObject):
             processed_seconds = self._processed_seconds(sink)
             backend_error = self._error_name(sink)
             expected_seconds = current.expected_seconds
+            pcm_bytes_read = self._buffer.pos() if self._buffer is not None else 0
             if current.started_at:
                 elapsed_seconds = max(0.0, self._clock() - current.started_at)
+        input_drained = current is not None and pcm_bytes_read == len(current.audio.samples)
+        waiting_for_refill = (
+            current is not None and not input_drained and state == QtAudio.State.IdleState
+            and backend_error in {"NoError", "UnderrunError"}
+        )
+        if waiting_for_refill:
+            now = self._clock()
+            if pcm_bytes_read != self._idle_position:
+                self._idle_position, self._idle_since = pcm_bytes_read, now
+                self._trace("sink_waiting_for_refill", current,
+                            pcm_bytes_read=pcm_bytes_read, pcm_bytes=len(current.audio.samples),
+                            processed_ms=processed_seconds * 1000)
+            if now - self._idle_since < _REFILL_TIMEOUT:
+                if not self._idle_timer.isActive():
+                    self._idle_timer.start()
+                return
+        self._idle_timer.stop()
+        self._pcm_probe.stop()
         errored = backend_error != "NoError"
         played_everything = (
             expected_seconds <= 0.0
@@ -412,6 +475,7 @@ class QtNarratorAudioOutput(QObject):
             current is not None
             and state == QtAudio.State.IdleState
             and not errored
+            and input_drained
             and played_everything
         )
         if current is not None:
@@ -419,6 +483,10 @@ class QtNarratorAudioOutput(QObject):
                 result, reason = "completed", ""
             elif self._stop_requested:
                 result, reason = "stopped", "session or user stop"
+            elif waiting_for_refill:
+                result, reason = (
+                    "interrupted", f"Audio refill stalled after {pcm_bytes_read} of {len(current.audio.samples)} PCM bytes"
+                )
             elif errored:
                 result, reason = "interrupted", f"backend error {backend_error}"
             else:
@@ -452,7 +520,7 @@ class QtNarratorAudioOutput(QObject):
                     state.name,
                     backend_error,
                 )
-        if current is not None and errored:
+        if current is not None and (errored or waiting_for_refill):
             self._notify_failure(current, "Narrator audio playback failed")
         pending = self._pending
         self._pending = self._waiting.popleft() if self._waiting else None
@@ -524,22 +592,28 @@ class QtNarratorAudioOutput(QObject):
     ) -> None:
         audio = playback.audio
         width = _SAMPLE_WIDTHS.get(audio.sample_format.casefold(), 2)
+        pcm_bytes_read = self._buffer.pos() if self._buffer is not None else 0
         self._trace("sink_terminal", playback, result=result, reason=reason,
+                    pcm_frames=len(audio.samples) // (width * max(1, audio.channels)),
+                    qt_processed_frames=round(processed_seconds * audio.sample_rate),
                     processed_ms=processed_seconds * 1000,
                     expected_ms=playback.expected_seconds * 1000,
+                    pcm_bytes_read=pcm_bytes_read, pcm_bytes=len(audio.samples),
                     elapsed_ms=elapsed_seconds * 1000, terminal_state=terminal_state,
                     backend_error=backend_error, stop_requested=self._stop_requested)
         # One line per terminal event, carrying everything needed to attribute a
         # perceived interruption to the right cause.
         logger.debug(
             "Narrator playback event=%s request=%d stop_reason=%r "
-            "played_ms=%.0f expected_ms=%.0f terminal_state=%s backend_error=%s "
+            "played_ms=%.0f expected_ms=%.0f pcm_bytes_read=%d pcm_bytes=%d terminal_state=%s backend_error=%s "
             "stop_requested=%s text=%r",
             result,
             playback.request_id,
             reason,
             processed_seconds * 1000.0,
             playback.expected_seconds * 1000.0,
+            pcm_bytes_read,
+            len(audio.samples),
             terminal_state,
             backend_error,
             self._stop_requested,
@@ -549,6 +623,7 @@ class QtNarratorAudioOutput(QObject):
             PlaybackRecord(
                 request_id=playback.request_id,
                 pcm_bytes=len(audio.samples),
+                pcm_bytes_read=pcm_bytes_read,
                 sample_rate=audio.sample_rate,
                 channels=audio.channels,
                 sample_format=audio.sample_format,
@@ -567,14 +642,9 @@ class QtNarratorAudioOutput(QObject):
         # Completion means all PCM played; terminal also includes underrun,
         # backend stop without an error, and explicit cancellation. Balancing
         # must release on all of those without treating them as successful speech.
-        self._notify_terminal(playback)
-
-    @staticmethod
-    def _notify_terminal(playback: _Playback) -> None:
         if playback.terminal_callback is not None:
-            callback, playback.terminal_callback = playback.terminal_callback, None
             try:
-                callback()
+                playback.terminal_callback()
             except Exception:
                 logger.exception("Narrator terminal playback observer failed")
 
@@ -583,9 +653,7 @@ class QtNarratorAudioOutput(QObject):
         try:
             playback.error_callback(message)
         except Exception:
-            logger.exception("Narrator playback error observer failed")
-        finally:
-            self._notify_terminal(playback)
+            return
 
     @staticmethod
     def _notify_completed(playback: _Playback) -> None:

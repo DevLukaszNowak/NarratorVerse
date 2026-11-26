@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=NarratorVerse
-Comment=Lokalne rozpoznawanie, tłumaczenie i czytanie napisów
-Comment[pl]=Lokalne rozpoznawanie, tłumaczenie i czytanie napisów
+Comment=Lokalny polski lektor napisów i dialogów z gier
+Comment[pl]=Lokalny polski lektor napisów i dialogów z gier
 Exec=narratorverse
-Icon=io.github.DevVoidPL.NarratorVerse
+Icon=io.github.DevVoidPL.NarratorVerse.round
 Terminal=false
 Categories=AudioVideo;
 StartupNotify=true

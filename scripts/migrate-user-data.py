@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Non-destructive migration from LektorPL to NarratorVerse.
+"""One-time, non-destructive migration after the owner requested a project rename.
 
 The old identity appears here only to locate existing data, never as a runtime
 alias. Portal grants are application-ID scoped and intentionally not imported.

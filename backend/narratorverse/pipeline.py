@@ -1,9 +1,21 @@
 """Standalone lifecycle controls; inference and recognition remain upstream."""
 from dataclasses import replace
 from game_optimization_linux.services.narrator_pipeline import NarratorPipeline, SubtitleTextGate
+from .tts_router import OcrTtsProvider
 
 
 class StandalonePipeline(NarratorPipeline):
+    def start(self, settings):
+        if isinstance(self.tts, OcrTtsProvider):
+            provider, voice = self.tts.speech_selection(settings)
+            if provider is not self.tts.piper:
+                self.tts.require_voice(provider, voice)
+                settings = replace(settings, voice_id=voice,
+                                   noise_scale=None, noise_w_scale=None,
+                                   normalize_narrator=False)
+            self.tts.select(provider.provider_id)
+        return super().start(settings)
+
     def pause_processing(self):
         """Discard pending work without closing the user's portal session."""
         with self._lock:
@@ -11,7 +23,6 @@ class StandalonePipeline(NarratorPipeline):
                         active_phrase_id=self._work_id if self._narration_busy else None,
                         pending_dialogue_ids=[item[2] for item in self._narration_queue])
             self._adaptive_rate.reset()
-            self._deduplicator.clear_pending()
             self._narration_queue.clear()
             self._narration_busy = False
             self._last_text_frame_digest = None
@@ -23,6 +34,7 @@ class StandalonePipeline(NarratorPipeline):
             self._work_id = self._request_id
             self._audio_request_floor = self._request_id
             self._latest_audio_request_id = 0
+            self._last_submitted_episode = None
             ocr = self._ocr_future
             self._ocr_future = None
             if ocr is not None: ocr.cancel()

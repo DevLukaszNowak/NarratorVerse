@@ -7,7 +7,7 @@ SCRIPT = '''
 import importlib, json
 groups = {'piper': ('piper.voice', 'onnxruntime'),
           'rapidocr': ('rapidocr', 'onnxruntime'),
-          'translation': ('ctranslate2', 'sentencepiece')}
+          'translation': ('ctranslate2', 'sacremoses', 'subword_nmt')}
 results = {}
 for name, modules in groups.items():
     try:

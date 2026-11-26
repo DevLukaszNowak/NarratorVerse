@@ -46,14 +46,14 @@ def main(argv=None):
         print('QuickMT: runtime nie przeszedł diagnostyki. Model nie był ładowany. '
               'Dla brakującego SentencePiece uruchom jawnie '
               'scripts/prepare-quickmt-runtime.sh przez sh, '
-              'następnie ponów diagnostykę modułem narratorverse.quickmt_smoke.', file=sys.stderr)
+              'następnie quickmt-setup.sh --test-only.', file=sys.stderr)
         return 1
     try:
         report = smoke_test(arguments.model_dir, arguments.text, arguments.profile)
     except Exception as error:
         print(f'QuickMT — test CPU NIEUDANY: {error}\n'
               'Sprawdź lokalny runtime CTranslate2/SentencePiece i kompletność modelu. '
-              'Po naprawie ponów diagnostykę. Nie użyto translatora zastępczego.', file=sys.stderr)
+              'Po naprawie uruchom ponownie z --test-only. Nie przełączono na Argos.', file=sys.stderr)
         return 1
     print(json.dumps(report, ensure_ascii=False, indent=2))
     print('OK: model załadowany, wykonano tłumaczenie na CPU i zamknięto provider. '

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from narratorverse.quickmt_model import QUICKMT_PROVIDER_ID
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from math import isfinite
+import re
 import time
 from typing import Any, Mapping
 
@@ -37,6 +36,7 @@ class CaptureSourceType(StrEnum):
 class NarratorComponentKind(StrEnum):
     CAPTURE = "capture"
     OCR = "ocr"
+    ASR = "asr"
     TRANSLATION = "translation"
     TTS = "tts"
     AUDIO = "audio"
@@ -165,13 +165,17 @@ class NarratorGameSettings:
     )
     subtitle_adapter_id: str = ""
     ocr_provider_id: str = ""
-    translation_provider_id: str = QUICKMT_PROVIDER_ID
+    translation_provider_id: str = ""
     translation_profile_id: str = ""
     tts_provider_id: str = ""
     voice_id: str = ""
+    f5_voice_id: str = "01"
+    chatterbox_voice_id: str = "builtin"
+    supertonic_voice_id: str = "M5-02"
     volume: float = 0.85
     speech_rate: float = 1.0
     adaptive_speech_rate: bool = True
+    adaptive_max_boost: float = 0.50
     audio_balance_enabled: bool = False
     audio_balance_target: str = ""
     audio_balance_db: float = -12.0
@@ -197,6 +201,12 @@ class NarratorGameSettings:
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
+        if self.f5_voice_id not in ("01", "02"):
+            raise ValueError("f5_voice_id must be 01 or 02")
+        if not isinstance(self.chatterbox_voice_id, str) or not re.fullmatch(r"02|builtin|chatterbox-[0-9a-f]{24}", self.chatterbox_voice_id):
+            raise ValueError("Nieznany głos Chatterbox")
+        if not isinstance(self.supertonic_voice_id, str) or not re.fullmatch(r"M5-02|supertonic-[0-9a-f]{24}", self.supertonic_voice_id):
+            raise ValueError("Nieznany głos Supertonic")
         object.__setattr__(self, "game_key", validate_game_key(self.game_key))
         if self.schema_version != NARRATOR_SETTINGS_SCHEMA_VERSION:
             raise ValueError("unsupported narrator settings schema version")
@@ -206,6 +216,8 @@ class NarratorGameSettings:
             raise ValueError("read_speaker_names must be a boolean")
         if not isinstance(self.adaptive_speech_rate, bool):
             raise ValueError("adaptive_speech_rate must be a boolean")
+        object.__setattr__(self, "adaptive_max_boost", _finite_number(
+            self.adaptive_max_boost, "adaptive_max_boost", 0.0, 1.0))
         for name in ("audio_balance_enabled", "normalize_narrator"):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a boolean")
@@ -335,14 +347,18 @@ class NarratorGameSettings:
             subtitle_adapter_id=str(values.get("subtitle_adapter_id", "")),
             ocr_provider_id=str(values.get("ocr_provider_id", "")),
             translation_provider_id=str(
-                values.get("translation_provider_id", QUICKMT_PROVIDER_ID)
+                values.get("translation_provider_id", "")
             ),
             translation_profile_id=str(values.get("translation_profile_id", "")),
             tts_provider_id=str(values.get("tts_provider_id", "")),
             voice_id=str(values.get("voice_id", "")),
+            f5_voice_id=values.get("f5_voice_id", "01"),
+            chatterbox_voice_id=values.get("chatterbox_voice_id", "02" if values.get("tts_provider_id") == "chatterbox-mtl-v3-vulkan" else "builtin"),
+            supertonic_voice_id=values.get("supertonic_voice_id", "M5-02"),
             volume=values.get("volume", 0.85),
             speech_rate=values.get("speech_rate", 1.0),
             adaptive_speech_rate=values.get("adaptive_speech_rate", True),
+            adaptive_max_boost=values.get("adaptive_max_boost", 0.50),
             audio_balance_enabled=values.get("audio_balance_enabled", False),
             audio_balance_target=values.get("audio_balance_target", ""),
             audio_balance_db=values.get("audio_balance_db", -12.0),
@@ -382,9 +398,13 @@ class NarratorGameSettings:
             "translation_profile_id": self.translation_profile_id,
             "tts_provider_id": self.tts_provider_id,
             "voice_id": self.voice_id,
+            "f5_voice_id": self.f5_voice_id,
+            "chatterbox_voice_id": self.chatterbox_voice_id,
+            "supertonic_voice_id": self.supertonic_voice_id,
             "volume": self.volume,
             "speech_rate": self.speech_rate,
             "adaptive_speech_rate": self.adaptive_speech_rate,
+            "adaptive_max_boost": self.adaptive_max_boost,
             "audio_balance_enabled": self.audio_balance_enabled,
             "audio_balance_target": self.audio_balance_target,
             "audio_balance_db": self.audio_balance_db,
@@ -651,6 +671,8 @@ class PcmAudio:
     worker_startup_ms: float | None = None
     worker_reused: bool = True
     audio_duration_ms: float | None = None
+    pending_limit: int = 8
+    native_speech_rate: float | None = None
 
     def __post_init__(self) -> None:
         if self.sample_rate <= 0 or self.channels <= 0:
@@ -770,7 +792,19 @@ class NarratorSessionSnapshot:
     generation: int = 0
 
     def narration_funnel_summary(self) -> dict[str, int]:
-        """Count abandoned candidates from replacements, expirations and resets."""
+        """Aggregate the raw decision counts into an interpretable funnel.
+
+        Every stage where a subtitle can be lost is reported, using the
+        pipeline's existing decision names.
+
+        ``candidate_abandoned`` is derived, because no single event marks it. A
+        candidate that has been seen once and never confirmed disappears through
+        one of three existing decisions: the subtitle changed to something
+        dissimilar (``candidate_replaced_dissimilar``), the stability window
+        elapsed (``candidate_window_expired``), or a later observation reset it
+        (``candidate_reset_*``). Summing those gives the number of candidates
+        that reached 1/2 and were silently dropped, which no other counter shows.
+        """
 
         counts = dict(self.narration_funnel)
 

@@ -1,30 +1,38 @@
-# 0.2.0-beta.1 — w przygotowaniu
+Wydanie testowe NarratorVerse 0.3.0. Paczka Flatpak ma wersję 0.3.0-beta i działa na Linuksie x86_64.
+
+## Instalacja
+
+Pobierz `NarratorVerse-0.3.0-beta-x86_64.flatpak` i plik `.sha256` z tego wydania, a potem:
+
+```sh
+sha256sum -c NarratorVerse-0.3.0-beta-x86_64.flatpak.sha256
+flatpak install --user ./NarratorVerse-0.3.0-beta-x86_64.flatpak
+flatpak run io.github.DevVoidPL.NarratorVerse//beta
+```
+
+SHA-256: `72125bd72547cf8286fd833f08faba49749352c293c4b14bd6ef2aee3a2d9f80`
+
+Paczka nie wymaga wcześniejszej wersji NarratorVerse. Środowisko GNOME Platform 49 Flatpak pobiera z Flathuba. Do czytania napisów wystarczą składniki w paczce. Modele Supertonic 3 i składniki rozpoznawania mowy pobierzesz w zakładce Komponenty.
 
 ## Zmiany
 
-- QuickMT zastępuje Argos jako lokalny translator EN → PL na CPU.
-  Pobieranie, naprawa i weryfikacja modelu są dostępne w panelu Komponenty.
-- Rewizja modelu `6209580ce1fe525214f29fc39725007b73410109` jest przypięta
-  wraz z sumami SHA-256 sześciu plików. Instalator zachowuje README i atrybucję.
-- Wspólna ochrona przed powtórzeniami obejmuje widoczne napisy, kolejkę
-  i historię od rozpoczęcia audio. Rezerwacje są zwalniane po odrzuceniu,
-  błędzie lub anulowaniu zadania.
-- Poprawiono obsługę wariantów OCR `m`/`rn`, z zachowaniem rozróżniania
-  liczb, negacji i zmian rozmówcy.
-- RapidOCR działa na CPU. Dostępne pozostają Tesseract i lokalny Piper.
-- Budowanie Flatpaka korzysta z przypiętych zależności i jawnej listy wejść,
-  bez kopiowania runtime z wcześniejszej instalacji.
+- Lektor z dźwięku gry (ASR, wersja alpha) rozpoznaje angielską mowę z wybranego strumienia gry przez Faster Whisper. Pokazuje tekst i polskie tłumaczenie, które może przeczytać.
+- Nowe silniki mowy: Supertonic 3 na CPU z głosem M5-02 i importem stylów oraz eksperymentalny Chatterbox Multilingual V3 na Vulkanie. Piper z głosem Voidek pozostaje domyślny. Napisy, dźwięk gry i szybki odczyt mają osobne ustawienia głosu.
+- Przyciszanie obejmuje tylko wybrany strumień gry i przywraca jego głośność po odczycie albo zatrzymaniu lektora. Poprawiono dostęp do miksera w Flatpaku.
+- Gdy kwestie czekają w kolejce, lektor czyta szybciej, bez zmiany wysokości głosu. Maksymalne przyspieszenie ustawiasz sam.
+- Poprawiono obsługę dopisków i etykiet rozmówców. Odtwarzanie nie kończy się już przed odczytaniem całej kwestii.
+- Argos ma ustawienia Zrównoważone i Szybkie. QuickMT pozostaje opcją eksperymentalną.
+- Nowa ikona aplikacji.
 
-## Ograniczenia
+## Znane problemy
 
-Problem powtarzania kwestii wymaga jeszcze weryfikacji w rzeczywistej sesji
-Arch/GTA z przechwytywaniem, OCR, Piperem i PipeWire. Testy automatyczne nie
-zastępują tej próby. Nie zweryfikowano dłuższej sesji z tłumaczeniem ani
-wydajności na słabszym CPU.
+- Lektor z dźwięku gry jest w wersji alpha. Od końca wypowiedzi do odczytu mija kilka sekund, a muzyka i efekty gry obniżają trafność rozpoznawania. Funkcja wymaga dalszej pracy ([#3](https://github.com/DevLukaszNowak/NarratorVerse/issues/3)).
+- Lektor może czasami dwa razy przeczytać ten sam dialog. Problem zostanie naprawiony w jednej z kolejnych wersji ([#4](https://github.com/DevLukaszNowak/NarratorVerse/issues/4)).
+- Szybka seria kwestii może przepełnić kolejkę.
+- Chatterbox wymaga sprzętowego Vulkan i pozostaje eksperymentalny.
 
-OCR może mylić małe lub cieniowane napisy. Ochrona przed powtórzeniami może
-pominąć prawdziwą, identyczną krótką replikę w oknie historii. Kolejki FIFO
-mają po osiem oczekujących elementów; przepełnienie usuwa najstarszy
-oczekujący dialog, bez przerywania aktualnego odtwarzania.
+Przyciszanie i adaptacyjne tempo sprawdzono w GTA V na Fedorze z Piperem i Supertonic 3 CPU.
 
-Ta wersja nie ma jeszcze publicznego pakietu Flatpak.
+Obecnie rozwijam GameOpti, więc kolejne poprawki NarratorVerse pojawią się później.
+
+Pełna lista zmian jest w [CHANGELOG.md](https://github.com/DevLukaszNowak/NarratorVerse/blob/v0.3.0/CHANGELOG.md).

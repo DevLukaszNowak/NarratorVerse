@@ -9,9 +9,15 @@ from threading import Event
 from PySide6.QtCore import QObject, Signal, Qt
 from game_optimization_linux.config import CONFIG_DIR
 from game_optimization_linux.services.narrator_persistence import _atomic_json_write
+from game_optimization_linux.services.narrator_tts import PIPER_DEFAULT_VOICE_ID, PIPER_PROVIDER_ID
+from .chatterbox_tts import CHATTERBOX_ID, CUSTOM_ID as CHATTERBOX_CUSTOM_ID
+from .supertonic_tts import COMPONENT_ID as SUPERTONIC_COMPONENT, SUPERTONIC_ID, VOICE_ID, CUSTOM_ID as SUPERTONIC_CUSTOM_ID
+from .tts_router import OcrTtsProvider, provider_epoch, resolve_speech, synthesis_options
 
 EXAMPLE = 'Cześć! Jestem Voidek. Wklej tekst, a przeczytam go na głos.'
-DEFAULTS = {'voice_id': 'voidek-pl-e991', 'speech_rate': 1.0, 'volume': .85}
+DEFAULTS = {'tts_provider_id': PIPER_PROVIDER_ID, 'voice_id': PIPER_DEFAULT_VOICE_ID,
+            'chatterbox_voice_id': 'builtin', 'supertonic_voice_id': VOICE_ID,
+            'speech_rate': 1.0, 'volume': .85, 'noise_scale': None, 'noise_w_scale': None}
 MAX_TEXT = 10000
 
 
@@ -24,7 +30,24 @@ def validate_options(values):
         if not math.isfinite(value) or not low <= value <= high:
             raise ValueError('Tempo: 0,5–2; głośność: 0–1')
         result[key] = value
-    if not isinstance(result['voice_id'], str): raise ValueError('Wybierz głos')
+    for key in ('noise_scale', 'noise_w_scale'):
+        value = result[key]
+        if value is not None:
+            if type(value) not in (int, float) or not 0 <= value <= 2:
+                raise ValueError('Zmienność głosu musi mieścić się między 0 a 2.')
+            result[key] = float(value)
+    for key in ('voice_id', 'chatterbox_voice_id', 'supertonic_voice_id'):
+        value = result[key]
+        if not isinstance(value, str) or len(value) > 128 or any(c in value for c in '\r\n\0'):
+            raise ValueError('Wybierz głos')
+        result[key] = value or DEFAULTS[key]
+    if result['chatterbox_voice_id'] not in ('02', 'builtin') and not CHATTERBOX_CUSTOM_ID.fullmatch(result['chatterbox_voice_id']):
+        raise ValueError('Wybierz głos Chatterbox')
+    if result['supertonic_voice_id'] != VOICE_ID and not SUPERTONIC_CUSTOM_ID.fullmatch(result['supertonic_voice_id']):
+        raise ValueError('Wybierz głos Supertonic 3')
+    if result['tts_provider_id'] not in ('', PIPER_PROVIDER_ID, CHATTERBOX_ID, SUPERTONIC_ID):
+        raise ValueError('Wybierz silnik mowy')
+    result['tts_provider_id'] = result['tts_provider_id'] or PIPER_PROVIDER_ID
     return {key: result[key] for key in DEFAULTS}
 
 
@@ -54,6 +77,7 @@ class QuickRead(QObject):
         if self.path.exists(): self.options = validate_options(json.loads(self.path.read_text()))
         self.state, self.error, self.required = 'idle', '', ''
         self.generation, self.index, self.parts = 0, 0, []
+        self.provider, self.voice_id = None, ''
         self.cancelled = Event()
         self.closed = False
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='narratorverse-quick')
@@ -83,18 +107,23 @@ class QuickRead(QObject):
         if component_job: raise RuntimeError('Poczekaj na zakończenie operacji komponentu')
         parts = chunks(text)
         selected = validate_options({**self.options, **options})
-        voice = selected['voice_id'] or DEFAULTS['voice_id']
-        if voice not in self.tts.available_voice_ids:
-            self.state, self.required = 'error', 'tts.voidek' if voice == DEFAULTS['voice_id'] else 'custom-voice'
-            self.error = 'Brak wybranego głosu lub środowiska Piper. Zainstaluj Voidek w Komponentach albo wybierz dostępny własny głos.'
+        provider, voice = resolve_speech(self.tts, selected)
+        try:
+            OcrTtsProvider.require_voice(provider, voice)
+        except RuntimeError as error:
+            self.state = 'error'
+            self.required = {SUPERTONIC_ID: SUPERTONIC_COMPONENT, CHATTERBOX_ID: 'tts.chatterbox'}.get(
+                selected['tts_provider_id'], 'tts.voidek' if voice == DEFAULTS['voice_id'] else 'custom-voice')
+            self.error = str(error)
             self.notify()
-            raise RuntimeError(self.error)
+            raise
         if not self.audio.available:
             self.state, self.required, self.error = 'error', 'audio.qt-pcm', 'Brak urządzenia wyjścia dźwięku. Sprawdź ustawienia dźwięku systemu.'
             self.notify(); raise RuntimeError(self.error)
         self.save(selected)
         self.generation += 1
         self.cancelled = Event()
+        self.provider, self.voice_id = provider, voice
         self.parts, self.index, self.error, self.required = parts, 0, '', ''
         self._synthesize()
         return self.snapshot()
@@ -103,13 +132,11 @@ class QuickRead(QObject):
         self.state = 'synthesizing'; self.notify()
         generation, cancelled, options = self.generation, self.cancelled, dict(self.options)
         text = self.parts[self.index]
+        provider, voice_id = self.provider, self.voice_id
+        arguments = synthesis_options(provider, options, voice_id, provider_epoch(provider))
         def work():
-            try:
-                if cancelled.is_set(): return None
-                return self.tts.synthesize(text, language='pl', voice_id=options['voice_id'], speech_rate=options['speech_rate'])
-            finally:
-                # Stop may race with initial worker construction. Close again after inference.
-                if cancelled.is_set(): self.tts.close()
+            if cancelled.is_set(): return None
+            return provider.synthesize(text, **arguments)
         future = self.pool.submit(work)
         def done(f):
             try: payload = {'generation': generation, 'pcm': f.result(), 'volume': options['volume']}
@@ -122,6 +149,7 @@ class QuickRead(QObject):
         if result.get('stopped'):
             self.state = 'stopped'; self.notify(); return
         if result.get('error'):
+            self.provider.close()
             self.state, self.error = 'error', result['error']; self.notify(); return
         pcm = result.get('pcm')
         if pcm is None: return
@@ -140,13 +168,13 @@ class QuickRead(QObject):
         self.index += 1
         if self.index < len(self.parts): self._synthesize()
         else:
+            self.provider.close()
             self.state = 'finished'; self.notify()
-            self.pool.submit(self.tts.close)
 
     def _audio_error(self, generation, message):
         if generation != self.generation: return
+        self.provider.close()
         self.state, self.error = 'error', message; self.notify()
-        self.pool.submit(self.tts.close)
 
     def stop(self):
         if not self.busy: return self.snapshot()
@@ -154,12 +182,11 @@ class QuickRead(QObject):
         self.cancelled.set()
         self.state = 'stopping'; self.notify()
         self.audio.stop()
-        self.tts.cancel()
-        future = self.pool.submit(self.tts.close)
+        self.provider.cancel()
+        future = self.pool.submit(self.provider.close)
         future.add_done_callback(lambda _: self.completed.emit({'generation': generation, 'stopped': True}))
         return self.snapshot()
 
     def shutdown(self):
         self.stop(); self.closed = True
-        self.pool.shutdown(wait=True, cancel_futures=True)
-        self.tts.close()
+        self.pool.shutdown(wait=True, cancel_futures=False)

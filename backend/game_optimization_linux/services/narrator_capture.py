@@ -123,7 +123,9 @@ class PortalScreenCaptureProvider:
             )
         return self._backend.capabilities()
 
-    # The pipeline reads transport diagnostics through this provider.
+    # Forward the transport's capture diagnostics through to the pipeline. The
+    # pipeline holds this provider, not the backend or the transport, so without
+    # these the panel would keep reporting zero frames and "Not negotiated".
     @property
     def negotiated_variant(self) -> str:
         return str(getattr(self._backend, "negotiated_variant", "") or "")

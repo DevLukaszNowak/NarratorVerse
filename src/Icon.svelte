@@ -5,6 +5,7 @@
  const shapes:Record<string,{base:string[];accent?:string[];solid?:boolean}>={
   narrator:{base:['M4 4h16v13H9l-5 4V4Z','M8 8h8M8 12h6']},
   quick:{base:['M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3ZM12 18v3M8 21h8'],accent:['M5 10v1a7 7 0 0 0 14 0v-1']},
+  audio:{base:['M3 12h2m2-3v6m4-10v14m4-11v8m4-5v2m2-1h1']},
   components:{base:['m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3ZM4 7.5l8 4.5 8-4.5M12 12v9'],accent:['m8 5.25 8 4.5v4.5']},
   settings:{base:['m10 3-.6 2.2-2 .9L5.3 5.5 3.5 8.6 5 10.2v2.3L3.5 14l1.8 3.2 2.1-.6 2 .9L10 20h4l.6-2.5 2-.9 2.1.6 1.8-3.2-1.5-1.5v-2.3l1.5-1.6-1.8-3.1-2.1.6-2-.9L14 3h-4Z'],accent:['M15 11.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z']},
   play:{base:['m8 5 11 7-11 7V5Z'],solid:true},

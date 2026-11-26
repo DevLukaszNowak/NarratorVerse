@@ -25,8 +25,6 @@ from game_optimization_linux.models.narrator import (
 )
 
 from .narrator_persistence import _atomic_json_write
-from narratorverse.quickmt_model import (QUICKMT_COMPONENT_ID, QUICKMT_REVISION,
-    QUICKMT_DOWNLOAD_FILES, QUICKMT_BASE_URL, QUICKMT_ATTRIBUTION)
 
 
 _COMPONENT_ID = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
@@ -223,24 +221,30 @@ DEFAULT_NARRATOR_COMPONENTS = (
         message="Verified 4.5 MiB Polish tessdata_fast model",
     ),
     NarratorComponentDefinition(
-        component_id=QUICKMT_COMPONENT_ID,
+        component_id="translation.opus-en-pl",
         kind=NarratorComponentKind.TRANSLATION,
-        name="QuickMT English to Polish (CPU)",
+        name="Argos OPUS English to Polish",
         license_id="CC-BY-4.0",
         runtime_license_id="MIT / Apache-2.0",
         artifact_license_id="CC-BY-4.0",
-        version=QUICKMT_REVISION,
-        download_size_bytes=sum(size for size, _, _ in QUICKMT_DOWNLOAD_FILES.values()),
-        attribution=QUICKMT_ATTRIBUTION,
+        version="1.9",
+        download_size_bytes=67_294_886,
+        attribution=(
+            "OPUS-MT English to Polish model by Jörg Tiedemann and "
+            "Santhosh Thottingal, CC BY 4.0"
+        ),
         install_ready=True,
-        message="Verified 384.9 MiB QuickMT model; download once, translate offline on CPU",
-        artifacts=tuple(
+        message="Verified 64.2 MiB Argos OPUS model for local CPU translation",
+        artifacts=(
             NarratorComponentArtifact(
-                source_url=QUICKMT_BASE_URL + '/' + name,
-                sha256=digest,
-                size_bytes=size,
-                target_relative_path=name,
-            ) for name, (size, _, digest) in QUICKMT_DOWNLOAD_FILES.items()
+                source_url=(
+                    "https://data.argosopentech.com/argospm/v1/"
+                    "translate-en_pl-1_9.argosmodel"
+                ),
+                sha256="85d865369326b6d8220876fbd7bc552fa5ec8b99e81161fab4a26f78187cedbc",
+                size_bytes=67_294_886,
+                archive_format="zip",
+            ),
         ),
     ),
     NarratorComponentDefinition(
@@ -569,6 +573,8 @@ class NarratorComponentManager:
                     )
             if not installed_files:
                 raise RuntimeError("The narrator component contains no installable files")
+            before_commit = getattr(self, '_check_install_cancelled', None)
+            if callable(before_commit): before_commit()
             _atomic_json_write(
                 staging / "component.json",
                 {
@@ -595,6 +601,7 @@ class NarratorComponentManager:
                     "files": installed_files,
                 },
             )
+            if callable(before_commit): before_commit()
             if backup.exists():
                 shutil.rmtree(backup)
             if target.exists():
@@ -736,7 +743,8 @@ class NarratorComponentManager:
             path = (root / relative).resolve(strict=False)
             if root not in path.parents or not path.is_file() or path.is_symlink():
                 return False, f"The component file is missing: {relative.as_posix()}"
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
             if digest != str(entry.get("sha256", "")):
                 return False, f"The component file failed verification: {relative.as_posix()}"
         return True, ""

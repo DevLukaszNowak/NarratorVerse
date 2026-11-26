@@ -6,16 +6,17 @@ and copyright notice are preserved in `LICENSE`. RapidOCR attribution in the
 adapter is preserved in the original source files.
 
 The application also uses Tauri, Svelte, Qt for Python/PySide6, Tesseract,
-Leptonica, GStreamer, RapidOCR, ONNX Runtime, CTranslate2 and Piper. Their
-licenses are separate from the application license. Python distribution
-metadata and supplied license files are retained in the local runtime. Model
-manifests preserve component attribution and artifact/runtime license IDs.
+Leptonica, GStreamer, RapidOCR, ONNX Runtime, CTranslate2, SentencePiece,
+sacremoses, Piper, Supertonic and chatterbox.cpp with ggml. Their licenses are separate
+from the application license. Python distribution metadata and supplied license
+files are retained in the local runtime. Model manifests preserve component
+attribution and artifact/runtime license IDs.
 
 Publishing this source tree is not redistribution approval for the copied runtime.
-The tree contains application sources, manifests, license texts and test fixtures,
-not the third-party wheels, native libraries or model weights. The SentencePiece
+The tree contains application sources, manifests and license texts, not the
+third-party wheels, native libraries or model weights. The SentencePiece
 Apache-2.0 license and upstream NOTICE (including its copyright/contact) are
-preserved. Dependency lock files are not copies of the dependency implementations.
+preserved.
 
 ## Voidek
 
@@ -27,7 +28,45 @@ The package builder includes `tts.voidek`; custom voices and all user
 configuration/cache remain excluded. This permission does not relicense the
 model or cover other third-party dependencies.
 
-## Integration candidate runtime snapshot
+## Supertonic 3
+
+The Flatpak bundles the `supertonic` 1.3.1 Python runtime with ONNX Runtime and
+NumPy. The Supertonic 3 model files are downloaded from
+`Supertone/supertonic-3`, revision `3cadd1ee6394adea1bd021217a0e650ede09a323`,
+through the Components panel and are not part of the bundle.
+
+`backend/narratorverse/assets/supertonic/Supertonic3-M5-02.json` is an
+owner-authorized voice style adapted from preset M5 of that model. Its origin
+is described in `PROVENANCE.txt` beside it. The style and the model are subject
+to the OpenRAIL-M license in `Supertonic3-OpenRAIL-M.txt`, including its use
+restrictions. The license is not changed by the MIT license of this repository.
+
+## Chatterbox Multilingual V3
+
+The experimental Vulkan engine bundles a chatterbox.cpp command-line build,
+ggml libraries and the quantized Chatterbox Multilingual weights
+`t3-v3-q8_0.gguf` and `s3gen-mtl-q8_0.gguf`. The MIT notices
+are kept in `Chatterbox-cpp-MIT.txt`, `Chatterbox-ggml-MIT.txt` and
+`Chatterbox-ResembleAI-MIT.txt`. The build sources and conversion scripts are
+not part of this repository.
+
+## Translation and speech recognition
+
+The normal EN-to-PL translator runs the Argos Translate model package
+`translate-en_pl-1_9` with CTranslate2. The model is OPUS-MT English to Polish
+by Jörg Tiedemann and Santhosh Thottingal, CC BY 4.0. It is bundled as the
+`translation.opus-en-pl` component with its original README and attribution.
+
+The experimental QuickMT provider uses quickmt/quickmt-en-pl, revision
+`6209580ce1fe525214f29fc39725007b73410109` (QuickMT, CC BY 4.0). The model is
+downloaded separately and is not bundled.
+
+Speech recognition uses Faster Whisper with `Systran/faster-whisper-small`,
+revision `536b0662742c02347bc0e980a01041f333bce120`. The Python runtime and the
+model are downloaded through the Components panel and are not part of the bundle. The
+Whisper MIT license is kept in `Whisper-LICENSE.txt`.
+
+## Runtime snapshot
 
 The local package is assembled from an independently copied runtime snapshot,
 not a reproducible source build of every native dependency. An inventory with
@@ -36,17 +75,7 @@ SHA-256 values and Python package license metadata is included under
 third-party notices, corresponding-source obligations or a redistribution
 review (notably for Qt/Piper/GStreamer and bundled native dependencies).
 
-The package is a local verification artifact, not a distribution-ready release.
 No claim is made that this snapshot's license/source audit is complete.
-
-## QuickMT
-
-The normal EN-to-PL provider uses quickmt/quickmt-en-pl, revision
-6209580ce1fe525214f29fc39725007b73410109 (QuickMT, CC BY 4.0).
-The downloaded model is not bundled. Attribution, original README and
-unmodified-file notice are preserved by the component catalog.
-See docs/REDISTRIBUTION.md: public distribution of the runtime is blocked
-until the listed corresponding-source and third-party-notice checks close.
 
 ## Open runtime obligations
 

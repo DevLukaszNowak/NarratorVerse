@@ -1,29 +1,26 @@
 # Diagnostyka
 
-## Kontrole automatyczne
+## Kontrole źródeł
 
-`npm run check`, `npm run test:ui` i `npm run build` sprawdzaja frontend.
-`sh scripts/test.sh` uruchamia testy backendu w przygotowanym lokalnym
-srodowisku Python/Qt; wymagania opisuje [INSTALL](INSTALL.md).
-Testy nie zastępują próby przechwytywania i odtwarzania w aplikacji.
+`npm run check` i `npm run build` sprawdzają frontend. Testy backendu nie są częścią publicznego repozytorium. Żadna z tych kontroli nie zastępuje próby przechwytywania i odtwarzania w aplikacji.
 
-## Slad zdarzen
+## Ślad zdarzeń
 
-`NARRATORVERSE_DIAGNOSTIC_TRACE` przyjmuje absolutna sciezke do nowego pliku
-JSONL. Pola tekstowe sa hashowane przed zapisem. Zwykle logi i inne slady
-moga zawierac pelne napisy; przejrzyj je przed udostepnieniem.
+`NARRATORVERSE_EXPERIMENT_TRACE` przyjmuje absolutną ścieżkę do nowego pliku JSONL. Aplikacja nie nadpisuje istniejącego pliku. Ślad zawiera pełne teksty napisów i tłumaczeń, więc przejrzyj go przed udostępnieniem.
 
-Zdarzenia obejmuja akceptacje napisow, rezerwacje, kolejki, tlumaczenie,
-synteze i odtwarzanie. Producent nie czeka na zapis dyskowy; utracone
-zdarzenia i bledy zapisu sa liczone.
+W Flatpaku plik musi leżeć w katalogu dostępnym dla aplikacji:
 
-`recognized_to_speech_ms` mierzy czas od rozpoznania do startu audio,
-`accepted_to_speech_ms` od akceptacji, a `frame_to_speech_ms` od klatki.
-`tts_ms` opisuje tylko synteze.
+```sh
+flatpak run --env=NARRATORVERSE_EXPERIMENT_TRACE="$HOME/.var/app/io.github.DevVoidPL.NarratorVerse/data/trace.jsonl" io.github.DevVoidPL.NarratorVerse//beta
+```
 
-## Runtime tlumaczenia
+Ślad obejmuje akceptację napisów, kolejki, tłumaczenie, syntezę i odtwarzanie. Zapis odbywa się w osobnym wątku i nie spowalnia lektora. Gdy kolejka zapisu się zapełni, nadmiarowe zdarzenia są pomijane, a ich liczbę podaje ostatni wpis `trace_closed`.
 
-`python3 -m narratorverse.quickmt_runtime` sprawdza natywne zaleznosci.
-`narratorverse.quickmt_smoke` wykonuje inferencje na wskazanym modelu.
-Oba narzedzia wymagaja przygotowanego runtime. Pomiar samej inferencji
-nie obejmuje OCR, przechwytywania ani opoznienia fizycznego wyjscia audio.
+Dodatkowe przełączniki działają tylko razem ze śladem:
+
+- `NARRATORVERSE_OCR_WAV=1` zapisuje obok pliku JSONL nagrania WAV mowy odtworzonej w trybie napisów.
+- `NARRATORVERSE_ASR_DIAGNOSTICS=1` dodaje zdarzenia z rozpoznawania mowy w lektorze z dźwięku gry.
+
+## Runtime tłumaczenia QuickMT
+
+`python3 -m narratorverse.quickmt_runtime` sprawdza natywne zależności eksperymentalnego QuickMT, a `narratorverse.quickmt_smoke` uruchamia tłumaczenie na wskazanym modelu. Oba narzędzia wymagają przygotowanego środowiska Python. Pomiar samego tłumaczenia nie obejmuje OCR, przechwytywania ani opóźnienia wyjścia audio.

@@ -1,4 +1,4 @@
-"""Developer-only offline QuickMT corpus timing, preserving repeated occurrences.
+"""Explicit offline Argos/QuickMT comparison on identical JSONL occurrences.
 
 No OCR, TTS, cache, downloads or application profile writes. Run separately
 from gameplay: only one translation provider is resident at a time.
@@ -44,11 +44,11 @@ def runtime_versions():
 
 
 def compare(texts, output, *, profile='balanced', passes=2,
-            order=('quickmt',), provider_factory=None):
+            order=('argos', 'quickmt'), provider_factory=None):
     if profile not in ('balanced', 'fast') or passes < 1:
         raise ValueError('Expected balanced/fast and at least one pass')
-    if tuple(order) != ('quickmt',):
-        raise ValueError('Only the installed QuickMT provider is supported')
+    if sorted(order) != ['argos', 'quickmt']:
+        raise ValueError('Order must contain argos and quickmt exactly once')
     if not texts or any(not isinstance(text, str) or not text.strip() or len(text) > 8000
                         for text in texts):
         raise ValueError('Expected nonempty corpus of texts up to 8000 characters')
@@ -111,13 +111,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--corpus', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--quickmt-dir', type=Path, required=True)
+    parser.add_argument('--argos-dir', type=Path)
     parser.add_argument('--profile', choices=('balanced', 'fast'), default='balanced')
     parser.add_argument('--passes', type=int, default=2)
+    parser.add_argument('--order', choices=('argos-first', 'quickmt-first'), default='argos-first')
     arguments = parser.parse_args(argv)
+    from game_optimization_linux.services.narrator_translation import ArgosCTranslate2TranslationProvider
     from .quickmt import QuickMTTranslationProvider
     def provider_factory(name):
-        return QuickMTTranslationProvider()
-    order = ('quickmt',)
+        if name == 'quickmt':
+            return QuickMTTranslationProvider(arguments.quickmt_dir)
+        return ArgosCTranslate2TranslationProvider(component_path=arguments.argos_dir)
+    order = ('argos', 'quickmt') if arguments.order == 'argos-first' else ('quickmt', 'argos')
     try:
         return compare(load_corpus(arguments.corpus), arguments.output,
                        profile=arguments.profile, passes=arguments.passes,

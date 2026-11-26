@@ -9,6 +9,32 @@ import sys
 import time
 from typing import Any
 
+from game_optimization_linux.services.narrator_translation_units import MAX_UNIT_TOKENS, sentence_units
+
+
+class _BpeTokenizer:
+    def __init__(self, model_file: str) -> None:
+        from sacremoses.normalize import MosesPunctNormalizer
+        from sacremoses.tokenize import MosesDetokenizer, MosesTokenizer
+        from subword_nmt.apply_bpe import BPE
+
+        self._normalizer = MosesPunctNormalizer("en")
+        self._tokenizer = MosesTokenizer("en")
+        self._detokenizer = MosesDetokenizer("pl")
+        with Path(model_file).open("r", encoding="utf-8") as codes:
+            self._bpe = BPE(codes)
+
+    def encode(self, text: str, *, out_type: type[str]) -> list[str]:
+        if out_type is not str:
+            raise TypeError("The BPE tokenizer returns string tokens")
+        normalized = self._normalizer.normalize(text)
+        tokens = self._tokenizer.tokenize(normalized)
+        return self._bpe.segment_tokens(tokens)
+
+    def decode(self, tokens: list[str]) -> str:
+        words = " ".join(tokens).replace("@@ ", "").split(" ")
+        return self._detokenizer.detokenize(words)
+
 
 class _TranslationEngine:
     def __init__(
@@ -24,8 +50,7 @@ class _TranslationEngine:
             import ctranslate2
 
             translator_factory = ctranslate2.Translator
-        if tokenizer_factory is None:
-            raise ValueError("A local model tokenizer is required")
+        tokenizer_factory = tokenizer_factory or _BpeTokenizer
         self._tokenizer = tokenizer_factory(model_file=str(tokenizer_path))
         self._translator = translator_factory(
             str(model_dir),
@@ -37,26 +62,47 @@ class _TranslationEngine:
         self._target_prefix = target_prefix
 
     def translate(self, text: str, *, beam_size: int) -> str:
-        tokens = self._tokenizer.encode(text, out_type=str)
-        if not tokens:
+        batches = []
+        for unit in sentence_units(text):
+            tokens = self._tokenizer.encode(unit, out_type=str)
+            if not tokens:
+                raise RuntimeError("The translation tokenizer returned no tokens for a unit")
+            # Bound actual BPE too (long identifiers or unknown words can expand).
+            for offset in range(0, len(tokens), MAX_UNIT_TOKENS):
+                batches.append(tokens[offset:offset + MAX_UNIT_TOKENS])
+        if not batches:
             raise RuntimeError("The translation tokenizer returned no tokens")
         options: dict[str, object] = {
             "beam_size": beam_size,
             "num_hypotheses": 1,
             "length_penalty": 0.2,
             "replace_unknowns": True,
+            "max_input_length": 0,
+            "max_decoding_length": 512,
+            "return_end_token": True,
         }
-        if self._target_prefix:
-            options["target_prefix"] = [[self._target_prefix]]
-        results = self._translator.translate_batch([tokens], **options)
-        if not results or not results[0].hypotheses:
-            raise RuntimeError("The translation model returned no hypothesis")
-        translated = str(self._tokenizer.decode(results[0].hypotheses[0])).strip()
-        if self._target_prefix and translated.startswith(self._target_prefix):
-            translated = translated[len(self._target_prefix) :].lstrip()
-        if not translated:
-            raise RuntimeError("The translation model returned empty text")
-        return translated
+        translated_units = []
+        # Small bounded batches allow large requests without giant decoder state.
+        for offset in range(0, len(batches), 8):
+            batch = batches[offset:offset + 8]
+            if self._target_prefix:
+                options["target_prefix"] = [[self._target_prefix]] * len(batch)
+            results = self._translator.translate_batch(batch, **options)
+            if len(results) != len(batch):
+                raise RuntimeError("The translation model returned a missing unit hypothesis")
+            for result in results:
+                if not result.hypotheses or not result.hypotheses[0]:
+                    raise RuntimeError("The translation model returned no unit hypothesis")
+                hypothesis = list(result.hypotheses[0])
+                if hypothesis[-1] != '</s>':
+                    raise RuntimeError("Translation incomplete: decoder limit reached without EOS")
+                translated = str(self._tokenizer.decode(hypothesis[:-1])).strip()
+                if self._target_prefix and translated.startswith(self._target_prefix):
+                    translated = translated[len(self._target_prefix) :].lstrip()
+                if not translated:
+                    raise RuntimeError("The translation model returned empty unit text")
+                translated_units.append(translated)
+        return ' '.join(translated_units)
 
 
 def _write(message: dict[str, object]) -> None:

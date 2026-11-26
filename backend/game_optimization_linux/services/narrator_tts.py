@@ -850,6 +850,8 @@ class PiperPolishTtsProvider:
             )
             worker = self._get_worker(selected_voice)
             try:
+                # Only forward the advanced overrides when the user set them, so
+                # the unset case keeps the previous call shape exactly.
                 advanced: dict[str, float] = {}
                 if noise_scale is not None:
                     advanced["noise_scale"] = noise_scale

@@ -60,7 +60,7 @@ impl Bridge {
         Ok(Self {child: Mutex::new(Some(child)), input: Mutex::new(input), pending, next: AtomicU64::new(1), pgid})
     }
     fn call(&self, method: String, params: Value) -> Result<Value, String> {
-        const ALLOWED: &[&str] = &["status","profile_create","profile_select","profile_rename","profile_delete","settings","ocr_options","reset","start","change_source","read","pause","stop","preview","region","components_refresh","component_cancel","component","voice_import","voice_remove","voice_preview","quick_settings","quick_read","quick_stop","audio_targets"];
+        const ALLOWED: &[&str] = &["status","profile_create","profile_select","profile_rename","profile_delete","settings","ocr_options","reset","start","change_source","read","pause","stop","preview","region","components_refresh","component_cancel","component","voice_import","voice_remove","voice_preview","voice_preview_stop","quick_settings","quick_read","quick_stop","audio_targets","asr_sources","asr_start","asr_stop","asr_tts","asr_settings"];
         if !ALLOWED.contains(&method.as_str()) { return Err("Unsupported method".into()); }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -92,13 +92,14 @@ async fn rpc(bridge: tauri::State<'_, Arc<Bridge>>, method: String, params: Valu
 }
 fn main() {
     let app = tauri::Builder::default().setup(|app| {
-        // Wayland shells resolve a named desktop icon, not just the embedded PNG.
-        // Keep GTK, the desktop entry and Flatpak on the exact same identity.
         #[cfg(target_os = "linux")]
         {
             use gtk::prelude::GtkWindowExt;
             if let Some(window) = app.get_webview_window("main") {
-                window.gtk_window()?.set_icon_name(Some("io.github.DevVoidPL.NarratorVerse"));
+                window.gtk_window()?.set_icon_name(Some(&format!("{}.round", app.config().identifier)));
+                if let Some(icon) = app.default_window_icon() {
+                    window.set_icon(icon.clone())?;
+                }
             }
         }
         match Bridge::spawn(app.handle().clone()) {

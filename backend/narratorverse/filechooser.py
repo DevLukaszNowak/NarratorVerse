@@ -1,4 +1,4 @@
-"""Native FileChooser portal; grant access to both Piper files, not the whole home."""
+"""Grant individual voice files through the native FileChooser portal."""
 import asyncio
 import shutil
 import tempfile
@@ -10,13 +10,15 @@ from dbus_next.aio import MessageBus
 from game_optimization_linux.services.narrator_tts import validate_piper_voice_config
 
 
+def local_file_path(uri):
+    parsed = urlparse(uri)
+    if parsed.scheme != 'file' or parsed.netloc not in ('', 'localhost'):
+        raise ValueError('Wybierz lokalne pliki głosu')
+    return Path(unquote(parsed.path))
+
+
 def pair_from_uris(uris):
-    paths = []
-    for uri in uris:
-        parsed = urlparse(uri)
-        if parsed.scheme != 'file' or parsed.netloc not in ('', 'localhost'):
-            raise ValueError('Wybierz lokalne pliki głosu')
-        paths.append(Path(unquote(parsed.path)))
+    paths = [local_file_path(uri) for uri in uris]
     models = [p for p in paths if p.suffix.lower() == '.onnx']
     if len(models) != 1 or len(paths) != 2:
         raise ValueError('Zaznacz razem model .onnx i jego konfigurację .onnx.json (Ctrl + kliknięcie).')
@@ -28,7 +30,7 @@ def pair_from_uris(uris):
     return model, configs[0]
 
 
-async def choose_files(cancelled=None):
+async def choose_files(cancelled=None, *, title=None, filters=None, multiple=True):
     bus = await MessageBus().connect()
     token = 'narratorverse_' + uuid4().hex
     handle = '/org/freedesktop/portal/desktop/request/' + bus.unique_name[1:].replace('.', '_') + '/' + token
@@ -41,7 +43,7 @@ async def choose_files(cancelled=None):
     match = "type='signal',interface='org.freedesktop.portal.Request',member='Response'"
     await bus.call(Message(destination='org.freedesktop.DBus', path='/org/freedesktop/DBus', interface='org.freedesktop.DBus', member='AddMatch', signature='s', body=[match]))
     try:
-        reply = await bus.call(Message(destination='org.freedesktop.portal.Desktop', path='/org/freedesktop/portal/desktop', interface='org.freedesktop.portal.FileChooser', member='OpenFile', signature='ssa{sv}', body=['', 'Importuj głos — wybierz .onnx i .onnx.json', {'handle_token': Variant('s', token), 'multiple': Variant('b', True), 'filters': Variant('a(sa(us))', [['Głos Piper', [[0, '*.onnx'], [0, '*.onnx.json']]]])}]))
+        reply = await bus.call(Message(destination='org.freedesktop.portal.Desktop', path='/org/freedesktop/portal/desktop', interface='org.freedesktop.portal.FileChooser', member='OpenFile', signature='ssa{sv}', body=['', title or 'Importuj głos — wybierz .onnx i .onnx.json', {'handle_token': Variant('s', token), 'multiple': Variant('b', multiple), 'filters': Variant('a(sa(us))', filters or [['Głos Piper', [[0, '*.onnx'], [0, '*.onnx.json']]]])}]))
         if reply.message_type == MessageType.ERROR: raise RuntimeError('Nie można otworzyć systemowego wyboru plików: ' + str(reply.body))
         handle = reply.body[0]
         deadline = asyncio.get_running_loop().time() + 300
@@ -84,3 +86,17 @@ def import_from_chooser(tts, cancelled=None):
         shutil.copyfile(model, destination)
         shutil.copyfile(config, destination.with_name(destination.name + '.json'))
         return tts.import_custom_voice(destination).voice_id
+
+
+def import_supertonic_from_chooser(tts, cancelled=None):
+    uris = asyncio.run(choose_files(cancelled, title='Importuj styl głosu Supertonic 3',
+                                   filters=[['Styl głosu', [[0, '*.json']]]], multiple=False))
+    if uris and (cancelled is None or not cancelled.is_set()):
+        return tts.import_style(local_file_path(uris[0]), cancelled)
+
+
+def import_chatterbox_from_chooser(tts, cancelled=None):
+    uris = asyncio.run(choose_files(cancelled, title='Importuj próbkę głosu Chatterbox',
+                                   filters=[['Plik WAV', [[0, '*.wav'], [0, '*.WAV']]]], multiple=False))
+    if uris and (cancelled is None or not cancelled.is_set()):
+        return tts.import_reference(local_file_path(uris[0]), cancelled)

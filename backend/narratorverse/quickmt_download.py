@@ -1,6 +1,9 @@
-"""Developer-only pinned model verifier/downloader; users install from Components.
+"""Opt-in, stdlib-only installer. Never imported by application startup.
 
-The GUI catalog and this diagnostic share the same immutable SHA-256 pins.
+LFS payloads have upstream SHA-256 pins. For Git files, authenticate the bytes
+against the pinned Git blob first, derive SHA-256 from those authenticated
+bytes, then independently verify the on-disk file with SHA-256. The receipt is
+not a trust anchor: offline verification also rechecks every upstream pin.
 """
 from __future__ import annotations
 
@@ -18,11 +21,13 @@ import tempfile
 from urllib.parse import urlsplit
 from urllib.request import build_opener, HTTPSHandler, HTTPRedirectHandler
 
-from .quickmt_model import QUICKMT_REVISION, QUICKMT_DOWNLOAD_FILES, QUICKMT_BASE_URL
+from .quickmt import QUICKMT_FILES, QUICKMT_REVISION
 
 
-BASE_URL = QUICKMT_BASE_URL
-FILES = QUICKMT_DOWNLOAD_FILES
+BASE_URL = 'https://huggingface.co/quickmt/quickmt-en-pl/resolve/' + QUICKMT_REVISION
+FILES = dict(QUICKMT_FILES, **{
+    'README.md': (4429, 'git', '14b9b51598418fb564045c03b48dc18b30bcac87'),
+})
 ATTRIBUTION = (
     'QuickMT EN→PL — quickmt/quickmt-en-pl\n'
     'Autor / wydawca repozytorium: QuickMT\n'
@@ -37,9 +42,10 @@ METADATA = {'SHA256SUMS.json', 'ATTRIBUTION.txt', '.download.lock'}
 
 
 def default_model_dir():
-    from game_optimization_linux.config import NARRATOR_COMPONENTS_DIR
-    from .quickmt_model import QUICKMT_COMPONENT_ID
-    return NARRATOR_COMPONENTS_DIR / QUICKMT_COMPONENT_ID
+    data = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
+    if not data.is_absolute():
+        data = Path.home() / '.local/share'
+    return data / 'narratorverse-experiments/quickmt-en-pl'
 
 
 def allowed_url(url):

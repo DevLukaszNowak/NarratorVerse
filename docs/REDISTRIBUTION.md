@@ -1,3 +1,24 @@
+# Redystrybucja pakietu
+
+## Pakiet 0.3.0-beta
+
+Pakiet `NarratorVerse-0.3.0-beta-x86_64.flatpak` zawiera ten sam rodzaj
+skopiowanego runtime co poprzednie wersje. Spis `snapshot-files.json`
+w pakiecie ma 8753 wpisy. W porównaniu z 0.2.0-beta.1 doszły:
+
+- runtime Supertonic 1.3.1 z ONNX Runtime 1.22.1 i NumPy 2.2.6 w osobnym
+  katalogu `.runtime/supertonic3`, z ich plikami `LICENSE`
+  i `ThirdPartyNotices.txt`;
+- styl głosu Supertonic M5-02 objęty licencją OpenRAIL-M Supertonic 3;
+- eksperymentalny Chatterbox: `tts-cli` z chatterbox.cpp, biblioteki ggml
+  z backendem Vulkan i wagi `t3-v3-q8_0.gguf` oraz `s3gen-mtl-q8_0.gguf`,
+  na licencji MIT;
+- składnik tłumaczenia `translation.opus-en-pl` (OPUS-MT, CC BY 4.0)
+  oraz sacremoses 0.1.1.
+
+Modele Supertonic 3, Faster Whisper z modelem Whisper small i QuickMT
+użytkownik pobiera w panelu Komponenty. Nie są częścią pakietu.
+Otwarte obowiązki opisane niżej dotyczą także tego pakietu.
 
 ## Co rzeczywiscie sprawdzono
 
@@ -12,8 +33,9 @@
 - Metadane wheeli nie dostarczaja kompletnej listy natywnych bibliotek ani
   ich obowiazkow. Dla CTranslate2 i wheeli PySide6 nie znaleziono plikow
   license w ich listach RECORD; to wymaga uzupelnienia z dokladnych zrodel.
-- Usunieto z kopii runtime sacremoses i subword-nmt, potrzebne tylko Argosowi.
-  Zachowano kod procesowy i zaleznosci OCR/Pipera.
+- Przy tym przeglądzie usunięto z kopii runtime sacremoses i subword-nmt,
+  potrzebne tylko Argosowi. W 0.3.0-beta Argos jest zwykłym tłumaczem,
+  więc sacremoses znowu jest w pakiecie.
 - Model QuickMT nie jest w bundle. Katalog komponentow zawiera przypieta
   rewizje, SHA-256, oryginalny README oraz informacje o autorze, licencji
   i braku zmian. Voidek zachowuje osobna licencje i zapisana zgode projektu.
@@ -36,8 +58,8 @@
 ## Ponowny przegląd rzeczywistego snapshotu
 
 Sprawdzono lokalny inventory i pliki stagingu, bez przebudowy runtime.
-To dowód zawartości historycznego `0.1.0-beta-integration`, nie nowego pakietu
-`0.2.0-beta.1`. Liczba 76 plików z nazwą license/notice/copying nie dowodzi,
+Tabela opisuje historyczny `0.1.0-beta-integration`; wersje Pipera, PySide6,
+CTranslate2, ONNX Runtime, OpenCV i pakietów LGPL/MPL są takie same w 0.3.0-beta. Liczba 76 plików z nazwą license/notice/copying nie dowodzi,
 że wszystkie obowiązki zostały spełnione.
 
 | Składnik snapshotu | Zachowane informacje | Nadal do wykonania |
@@ -51,6 +73,8 @@ To dowód zawartości historycznego `0.1.0-beta-integration`, nie nowego pakietu
 | inflate64 1.0.4, multivolumefile 0.2.3, py7zr 1.1.3, pybcj 1.0.8, pyppmd 1.3.1 | Metadane LGPL-2.1/2.1-or-later i pliki LICENSE | Ustalić źródła i sposób spełnienia LGPL dla dystrybuowanych wersji; usunięcie zbędnych pakietów dopiero po analizie użycia i testach |
 | Shapely 2.2.0 / GEOS | `LICENSE.txt` i `LICENSE_GEOS` | Ustalić dokładną wersję natywnego GEOS i obowiązki LGPL, nie tylko licencję wrappera |
 | certifi 2026.10.23, tqdm 4.70.0 | Metadane MPL-2.0 oraz MPL/MIT | Zmapować pliki objęte MPL i udostępnienie ich Source Code Form zgodnie z §3.2; nie zakładać obowiązku otwarcia całej aplikacji |
+| Supertonic 1.3.1, ONNX Runtime 1.22.1, NumPy 2.2.6 | `LICENSE`, `ThirdPartyNotices.txt` i metadane w `.runtime/supertonic3` | Przejrzeć biblioteki natywne w wheelach tak jak dla głównego runtime |
+| chatterbox.cpp, ggml i wagi Chatterbox | Trzy teksty MIT w `licenses`, karta modelu w katalogu eksperymentu | Powiązać `tts-cli` i biblioteki ggml z dokładną rewizją źródeł |
 | GStreamer i pozostałe ELF, Cargo/npm | Inventory ścieżek, zachowane locki | Pełna mapa plik → wersja → źródła → licencja; obejmuje pluginy, zależności statyczne frontendu i kod third-party |
 
 ## Źródła, oferta źródeł i forma dystrybucji
@@ -85,6 +109,16 @@ QuickMT jest pobierany osobno: QuickMT, CC BY 4.0, przypięta rewizja
 oryginalny README i informację o niezmienionych plikach. CC BY §3 wymaga
 odpowiedniej atrybucji, informacji o licencji i oznaczenia zmian przy udostępnianiu;
 nie wymaga corresponding-source kit dla runtime. Nie dołączono wag do Git.
+
+Supertonic 3 jest pobierany osobno z `Supertone/supertonic-3`, rewizja
+`3cadd1ee6394adea1bd021217a0e650ede09a323`. Dołączony styl M5-02 jest
+adaptacją presetu M5 i podlega licencji OpenRAIL-M wraz z jej ograniczeniami
+użycia. Tekst licencji jest w `licenses/Supertonic3-OpenRAIL-M.txt`
+i w pakiecie.
+
+OPUS-MT English to Polish (Jörg Tiedemann, Santhosh Thottingal, CC BY 4.0)
+jest dołączony jako składnik Argos z oryginalnym README i atrybucją.
+Faster Whisper i model `Systran/faster-whisper-small` pobiera użytkownik.
 
 Voidek ma odrębne, ograniczone zezwolenie projektowe opisane w
 `licenses/VOIDEK-LICENSE.md`, nie MIT ani ogólną zgodę na samodzielną

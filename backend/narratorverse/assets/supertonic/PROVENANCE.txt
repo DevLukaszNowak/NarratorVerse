@@ -1,0 +1,9 @@
+Supertonic3-M5-02.json is the unchanged, owner-authorized voice-style file from
+NarratorVerse's local M5-02 pilot. It adapts preset M5 from Supertone/supertonic-3
+(revision 3cadd1ee6394adea1bd021217a0e650ede09a323) to a synthetic reference.
+The adaptation changed style_ttl and retained the original style_dp.
+The corresponding restrictions are in the Supertonic 3 OpenRAIL-M license.
+
+SHA-256 35fcc0a9f65eb7e693a2aac17b30d6b9ce8cf5bb21953190cf08bc12d2ab15a0
+License https://huggingface.co/Supertone/supertonic-3/blob/3cadd1ee6394adea1bd021217a0e650ede09a323/LICENSE
+Style tool https://github.com/saurabhv749/supertonic3-voice-clone/tree/765ce5e27daa8d30937e2d0d8f9730280add5748

@@ -4,7 +4,7 @@ from pathlib import Path
 
 APP_ID = 'io.github.DevVoidPL.NarratorVerse'
 APP_NAME = 'NarratorVerse'
-APP_VERSION = '0.2.0-beta.1'
+APP_VERSION = '0.3.0-beta'
 
 def xdg(name, fallback):
     value = Path(os.environ.get(name, str(Path.home() / fallback))).expanduser()
